@@ -63,6 +63,43 @@ function detectSheetLayout(data){
   return best;
 }
 
+// 특정 시트에서 주어진 헤더명이 들어간 "열" 인덱스를 찾는다 (상단 40행 탐색)
+function getColIndexByHeader(sheetData, headerNames){
+  if (!sheetData || !sheetData.length) return -1;
+  const names = (Array.isArray(headerNames) ? headerNames : [headerNames])
+    .map(h => String(h).toUpperCase());
+  const scanRows = Math.min(40, sheetData.length);
+
+  for (let r = 0; r < scanRows; r++){
+    const row = sheetData[r] || [];
+    for (let c = 0; c < row.length; c++){
+      const v = trim(row[c]).toUpperCase();
+      if (!v) continue;
+      for (let i = 0; i < names.length; i++){
+        if (v.indexOf(names[i]) !== -1) return c;
+      }
+    }
+  }
+  return -1;
+}
+
+function autoSelectFirstValidSheet(){
+  var names = Object.keys(appState.allSheets);
+  var valid = names.filter(function(s){ return /^\d+\./.test(s) || s.indexOf('1.')!==-1; });
+  if(valid.length===0) valid = names.slice(1);
+  if(valid.length){
+    appState.currentSheet = valid[0];
+    appState.excelData = appState.allSheets[valid[0]];
+    try {
+      parseExcelData();
+    } catch (err) {
+      console.error('parseExcelData error:', err);
+      showStatus('엑셀 파싱 중 오류: '+ err.message, 'error');
+    }
+  }
+}
+
+
 // REMARKS 쓰레기값(라벨/안내문) 걸러내기
 function cleanRemarks(val){
   const t = trim(val);
