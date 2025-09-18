@@ -15,6 +15,24 @@ var appState = {
 
 var canvas, ctx, isDrawing=false, startX=0, startY=0, currentRect=null, minimapImgObj=null;
 
+// 특정 시트에서 주어진 헤더명이 들어간 "열" 인덱스를 찾는다 (상단 20행 탐색)
+function getColIndexByHeader(sheetData, headerNames){
+  if (!sheetData || !sheetData.length) return -1;
+  const names = headerNames.map(h=>String(h).toUpperCase());
+  const scanRows = Math.min(20, sheetData.length);
+  for (let r=0; r<scanRows; r++){
+    const row = sheetData[r] || [];
+    for (let c=0; c<row.length; c++){
+      const v = trim(row[c]).toUpperCase();
+      if (!v) continue;
+      for (let i=0;i<names.length;i++){
+        if (v.indexOf(names[i]) !== -1) return c;
+      }
+    }
+  }
+  return -1;
+}
+
 // 시트(2차원 배열) 상단 몇 줄에서 "IMAGE"가 들어간 셀의 열 인덱스를 찾음
 function getImageColIndex(sheetData) {
   if (!sheetData || !sheetData.length) return -1;
@@ -146,6 +164,13 @@ function parseExcelData(){
     if(/^A\./.test(sheetName)) continue; // 표지/서문 제외
     var data = appState.allSheets[sheetName];
 
+    // ✅ 추가: 열 기반 인덱스
+    var remarksCol = getColIndexByHeader(data, ['REMARKS','REMARK']);
+    var imageCol   = getColIndexByHeader(data, ['IMAGE']);
+   
+    // ✅ 추가: 왼쪽 A열에 있는 그룹 라벨 (예: WALL COVERING, PAINT 등)
+    var currentGroupLabel = '';
+     
     // ✅ 추가: IMAGE 열 인덱스 파악
     var imageCol = getImageColIndex(data);     
 
@@ -153,6 +178,12 @@ function parseExcelData(){
     for(var r=1; r<data.length; r++){
       var row = data[r]; if(!row || row.length<2) continue;
 
+      // ✅ A열에 새 라벨이 보이면 그룹 라벨 갱신 (MATERIAL/ DESCRIPTION 같은 generic 단어 제외)
+      var a0 = trim(row[0]);
+      if (a0 && !/^(MATERIAL|DESCRIPTION)$/i.test(a0)) {
+        currentGroupLabel = a0;     // 예: "WALL COVERING [도배]", "PAINT [도장]" 등
+      }
+       
       // 왼쪽 큰 타이틀(카테고리): MATERIAL / SWITCH / LIGHT 등만 인정
       var left = trim(row[0]).toUpperCase();
       if(left && (left.indexOf('MATERIAL')!==-1 || left.indexOf('SWITCH')!==-1 || left.indexOf('LIGHT')!==-1)){
@@ -169,8 +200,8 @@ function parseExcelData(){
           id: appState.materials.length+1,
           tabName: sheetName,
           displayId: '#'+sheetName,
+          material: currentGroupLabel || currentCategory || sheetName || '',
           category: currentCategory || 'MATERIAL',
-          material: '',
           area: trim(valueRightOf(row, hit.idx) || ''),
           item: '',
           remarks: '',
@@ -178,12 +209,39 @@ function parseExcelData(){
           imageUrl: '',
           image: null
         };
+
+        // ✅ 같은 행의 REMARKS 열 값이 있으면 즉시 반영
+        if (remarksCol > -1) {
+           var remCell = trim(row[remarksCol] || '');
+           if (remCell) current.remarks = remCell;
+        }
+        // ✅ 같은 행의 IMAGE 열도 있으면 반영
+        if (imageCol > -1) {
+           var imgCell = row[imageCol] != null ? String(row[imageCol]) : '';
+           var imgUrl  = extractImageUrl(imgCell);
+           if (isLikelyImage(imgUrl)) { current.imageUrl = imgUrl; current.image = imgUrl; }
+        }         
+         
       } else if(hit.key==='MATERIAL' && current){
         current.material = trim(valueRightOf(row, hit.idx) || '');
+      
       } else if(hit.key==='ITEM' && current){
         current.item = trim(valueRightOf(row, hit.idx) || '');
+         
+       if (remarksCol > -1) {
+         var rem3 = trim(row[remarksCol] || '');
+         if (rem3) current.remarks = rem3;
+       }
+       if (imageCol > -1) {
+         var imgCell3 = row[imageCol] != null ? String(row[imageCol]) : '';
+         var imgUrl3  = extractImageUrl(imgCell3);
+         if (isLikelyImage(imgUrl3)) { current.imageUrl = imgUrl3; current.image = imgUrl3; }
+       }
+         
+      
       } else if((hit.key==='REMARKS' || hit.key==='REMARK') && current){
         current.remarks = trim(valueRightOf(row, hit.idx) || '');
+
       } else if (hit.key === 'IMAGE' && current) {
         var val = trim(valueRightOf(row, hit.idx) || '');
         var url = extractImageUrl(val);
