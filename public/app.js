@@ -156,114 +156,135 @@ function valueRightOf(row, keyIdx){
 
 function parseExcelData(){
   appState.materials = [];
-  var current = null, currentCategory = '';
+
   var sheets = Object.keys(appState.allSheets);
 
-  for(var s=0; s<sheets.length; s++){
+  for (var s = 0; s < sheets.length; s++) {
     var sheetName = sheets[s];
-    if(/^A\./.test(sheetName)) continue; // 표지/서문 제외
-    var data = appState.allSheets[sheetName];
+    // 표지/서문(A.MAIN 등) 스킵 규칙 유지
+    if (/^A\./.test(sheetName)) continue;
 
-    // ✅ 추가: 열 기반 인덱스
+    var data = appState.allSheets[sheetName];
+    if (!data || !data.length) continue;
+
+    // === 열 인덱스 탐색(헤더 행이 꼭 1행이 아니어도 OK) ===
     var remarksCol = getColIndexByHeader(data, ['REMARKS','REMARK']);
     var imageCol   = getColIndexByHeader(data, ['IMAGE']);
-   
-    // ✅ 추가: 왼쪽 A열에 있는 그룹 라벨 (예: WALL COVERING, PAINT 등)
-    var currentGroupLabel = '';
-     
-    // ✅ 추가: IMAGE 열 인덱스 파악
-    var imageCol = getImageColIndex(data);     
 
-    currentCategory = '';
-    for(var r=1; r<data.length; r++){
-      var row = data[r]; if(!row || row.length<2) continue;
+    var current = null;
+    var currentCategory   = '';  // MATERIAL / SWITCH / LIGHT 등 (왼쪽 큰 카테고리)
+    var currentGroupLabel = '';  // A열의 구역 라벨 (예: WALL COVERING [도배], PAINT [도장] 등)
 
-      // ✅ A열에 새 라벨이 보이면 그룹 라벨 갱신 (MATERIAL/ DESCRIPTION 같은 generic 단어 제외)
-      var a0 = trim(row[0]);
-      if (a0 && !/^(MATERIAL|DESCRIPTION)$/i.test(a0)) {
-        currentGroupLabel = a0;     // 예: "WALL COVERING [도배]", "PAINT [도장]" 등
-      }
-       
-      // 왼쪽 큰 타이틀(카테고리): MATERIAL / SWITCH / LIGHT 등만 인정
-      var left = trim(row[0]).toUpperCase();
-      if(left && (left.indexOf('MATERIAL')!==-1 || left.indexOf('SWITCH')!==-1 || left.indexOf('LIGHT')!==-1)){
+    for (var r = 1; r < data.length; r++) {
+      var row = data[r];
+      if (!row || row.length < 2) continue;
+
+      // 왼쪽 큰 카테고리(MATERIAL / SWITCH / LIGHT 등) 추적
+      var left0Upper = trim(row[0]).toUpperCase();
+      if (left0Upper &&
+          (left0Upper.indexOf('MATERIAL') !== -1 ||
+           left0Upper.indexOf('SWITCH')   !== -1 ||
+           left0Upper.indexOf('LIGHT')    !== -1)) {
+        // 원문 그대로 보존
         currentCategory = trim(row[0]);
       }
 
-      // DESCRIPTION은 키로 취급하지 않음(값 오염 방지)
-      var hit = findKeyInRow(row, ['AREA','MATERIAL','ITEM','REMARKS','REMARK','IMAGE']);
-      if(!hit) continue;
+      // A열의 그룹 라벨(예: WALL COVERING [도배], PAINT [도장] 등) 갱신
+      // 헤더성 단어(MATERIAL/DESCRIPTION)는 라벨로 취급하지 않음
+      var a0 = trim(row[0]);
+      if (a0 && !/^(MATERIAL|DESCRIPTION)$/i.test(a0)) {
+        currentGroupLabel = a0;
+      }
 
-      if(hit.key==='AREA'){
-        if(current) appState.materials.push(current);
+      // 행 내 키 감지 (DESCRIPTION은 키로 취급하지 않음)
+      var hit = findKeyInRow(row, ['AREA','MATERIAL','ITEM','REMARKS','REMARK','IMAGE']);
+      if (!hit) continue;
+
+      if (hit.key === 'AREA') {
+        // 새 항목 시작
+        if (current) appState.materials.push(current);
+
         current = {
-          id: appState.materials.length+1,
+          id: appState.materials.length + 1,
           tabName: sheetName,
-          displayId: '#'+sheetName,
+          displayId: '#' + sheetName,
+
+          // MATERIAL 기본값: 그룹 라벨 → 카테고리 → 시트명
           material: currentGroupLabel || currentCategory || sheetName || '',
           category: currentCategory || 'MATERIAL',
-          area: trim(valueRightOf(row, hit.idx) || ''),
-          item: '',
+
+          area:    trim(valueRightOf(row, hit.idx) || ''),
+          item:    '',
           remarks: '',
-          brand: '',
+          brand:   '',
           imageUrl: '',
-          image: null
+          image:    null
         };
 
-        // ✅ 같은 행의 REMARKS 열 값이 있으면 즉시 반영
-        if (remarksCol > -1) {
-           var remCell = trim(row[remarksCol] || '');
-           if (remCell) current.remarks = remCell;
+        // AREA 행에서는 REMARKS/IMAGE를 강제 채우지 않음 (ITEM 행에서 확정)
+
+      } else if (hit.key === 'MATERIAL' && current) {
+        // 헤더 오염 방지: 오른쪽 값이 헤더성 단어면 무시
+        var mv = trim(valueRightOf(row, hit.idx) || '');
+        if (mv && !/^(DESCRIPTION|IMAGE|EA|REMARKS)$/i.test(mv)) {
+          current.material = mv;
         }
-        // ✅ 같은 행의 IMAGE 열도 있으면 반영
+
+        // 보조로 같은 줄의 REMARKS/IMAGE도 반영(있다면) — 단, 이후 ITEM에서 다시 덮어씀
+        if (remarksCol > -1) {
+          var rem2 = trim(row[remarksCol] || '');
+          if (rem2) current.remarks = rem2;
+        }
         if (imageCol > -1) {
-           var imgCell = row[imageCol] != null ? String(row[imageCol]) : '';
-           var imgUrl  = extractImageUrl(imgCell);
-           if (isLikelyImage(imgUrl)) { current.imageUrl = imgUrl; current.image = imgUrl; }
-        }         
-         
-      } else if(hit.key==='MATERIAL' && current){
-        current.material = trim(valueRightOf(row, hit.idx) || '');
-      
-      } else if(hit.key==='ITEM' && current){
+          var imgCell2 = row[imageCol] != null ? String(row[imageCol]) : '';
+          var imgUrl2  = extractImageUrl(imgCell2);
+          if (isLikelyImage(imgUrl2)) { current.imageUrl = imgUrl2; current.image = imgUrl2; }
+        }
+
+      } else if (hit.key === 'ITEM' && current) {
+        // ITEM 값
         current.item = trim(valueRightOf(row, hit.idx) || '');
-         
-       if (remarksCol > -1) {
-         var rem3 = trim(row[remarksCol] || '');
-         if (rem3) current.remarks = rem3;
-       }
-       if (imageCol > -1) {
-         var imgCell3 = row[imageCol] != null ? String(row[imageCol]) : '';
-         var imgUrl3  = extractImageUrl(imgCell3);
-         if (isLikelyImage(imgUrl3)) { current.imageUrl = imgUrl3; current.image = imgUrl3; }
-       }
-         
-      
-      } else if((hit.key==='REMARKS' || hit.key==='REMARK') && current){
-        current.remarks = trim(valueRightOf(row, hit.idx) || '');
+
+        // ✅ REMARKS의 정답: ITEM 행의 같은 줄 remarksCol(E열)
+        if (remarksCol > -1) {
+          var rem3 = trim(row[remarksCol] || '');
+          if (rem3) current.remarks = rem3;
+        }
+
+        // 같은 줄 IMAGE도 함께
+        if (imageCol > -1) {
+          var imgCell3 = row[imageCol] != null ? String(row[imageCol]) : '';
+          var imgUrl3  = extractImageUrl(imgCell3);
+          if (isLikelyImage(imgUrl3)) { current.imageUrl = imgUrl3; current.image = imgUrl3; }
+        }
+
+      } else if ((hit.key === 'REMARKS' || hit.key === 'REMARK') && current) {
+        // (안전망) 어떤 시트에서 REMARKS가 행 키로 오는 경우도 커버
+        var rv = trim(valueRightOf(row, hit.idx) || '');
+        if (rv) current.remarks = rv;
 
       } else if (hit.key === 'IMAGE' && current) {
+        // (안전망) 어떤 시트에서 IMAGE가 행 키로 오는 경우도 커버
         var val = trim(valueRightOf(row, hit.idx) || '');
         var url = extractImageUrl(val);
         if (isLikelyImage(url)) { current.imageUrl = url; current.image = url; }
-        else { current.imageUrl = ''; current.image = null; }
       }
-        // ... (AREA/MATERIAL/ITEM/REMARKS 등의 처리 if/else 끝난 직후)
-        // ✅ 추가: 이 행에 IMAGE 열 값이 있으면 current에 적용
-        if (current && imageCol > -1) {
-          var imgCell = (row[imageCol] != null) ? String(row[imageCol]) : '';
-          var imgUrl  = extractImageUrl(imgCell);
-          if (isLikelyImage(imgUrl)) {
-            current.imageUrl = imgUrl;
-            current.image    = imgUrl;
-          }
-        }
-    }
-    if(current){ appState.materials.push(current); current=null; }
-  }
+    } // rows
 
-  setTimeout(checkAllFilesUploaded,100);
+    // 마지막 항목 푸시
+    if (current) {
+      if (!trim(current.material)) {
+        current.material = currentGroupLabel || currentCategory || sheetName || '';
+      }
+      appState.materials.push(current);
+      current = null;
+    }
+  } // sheets
+
+  // 파싱 후 UI 진행
+  setTimeout(checkAllFilesUploaded, 100);
 }
+
 
 /* =======================
    Minimap
