@@ -19,10 +19,38 @@ function isMac(){ return /Macintosh|Mac OS X/.test(navigator.userAgent); }
 function koFont(){ return isMac() ? "Apple SD Gothic Neo" : "Malgun Gothic"; }
 function koNormalize(s){ try{ return String(s||"").normalize("NFC"); }catch(_){ return String(s||""); } }
 function trim(v){ return (v==null)?"":String(v).trim(); }
-function isLikelyImage(v){
-  v = trim(v);
-  return /^data:image\//i.test(v) || /^https?:\/\//i.test(v) || /\.(png|jpe?g|gif|webp)$/i.test(v);
+
+function stripQuotes(s) {
+  // 앞뒤 ' " ‘ ’ “ ” < > ( ) 제거
+  return String(s||'').trim()
+    .replace(/^[\s'"‘’“”<\(]+/, '')
+    .replace(/[\s'"‘’“”>\)]+$/, '');
 }
+function extractImageUrl(s) {
+  if (!s) return '';
+  let raw = stripQuotes(s);
+
+  // 1) data URL 우선
+  if (/^data:image\//i.test(raw)) return raw;
+
+  // 2) 문자열 내부에서 가장 그럴듯한 http(s) 이미지 URL 뽑기
+  //    - 확장자 있는 것
+  let m = raw.match(/https?:\/\/[^\s"')]+?\.(?:png|jpe?g|gif|webp|svg)(\?[^\s"')]*)?/i);
+  if (m) return m[0];
+
+  // 3) 확장자 없어도 바로 이미지 응답하는 호스트(예: picsum, placeholder 등)
+  m = raw.match(/https?:\/\/[^\s"')]+/i);
+  if (m) return m[0];
+
+  return '';
+}
+
+function isLikelyImage(v) {
+  const u = extractImageUrl(v);
+  if (!u) return false;
+  return /^data:image\//i.test(u) || /^https?:\/\//i.test(u);
+}
+
 function thumbHtml(url){
   return '<img src="'+url+'" style="width:40px;height:30px;object-fit:cover;border-radius:3px;" alt="이미지">';
 }
@@ -139,10 +167,11 @@ function parseExcelData(){
         current.item = trim(valueRightOf(row, hit.idx) || '');
       } else if((hit.key==='REMARKS' || hit.key==='REMARK') && current){
         current.remarks = trim(valueRightOf(row, hit.idx) || '');
-      } else if(hit.key==='IMAGE' && current){
+      } else if (hit.key === 'IMAGE' && current) {
         var val = trim(valueRightOf(row, hit.idx) || '');
-        if(isLikelyImage(val)){ current.imageUrl = val; current.image = val; }
-        else { current.imageUrl=''; current.image=null; }
+        var url = extractImageUrl(val);
+        if (isLikelyImage(url)) { current.imageUrl = url; current.image = url; }
+        else { current.imageUrl = ''; current.image = null; }
       }
     }
     if(current){ appState.materials.push(current); current=null; }
