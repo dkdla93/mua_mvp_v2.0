@@ -15,6 +15,20 @@ var appState = {
 
 var canvas, ctx, isDrawing=false, startX=0, startY=0, currentRect=null, minimapImgObj=null;
 
+// 시트(2차원 배열) 상단 몇 줄에서 "IMAGE"가 들어간 셀의 열 인덱스를 찾음
+function getImageColIndex(sheetData) {
+  if (!sheetData || !sheetData.length) return -1;
+  var maxScanRows = Math.min(20, sheetData.length);
+  for (var r = 0; r < maxScanRows; r++) {
+    var row = sheetData[r] || [];
+    for (var c = 0; c < row.length; c++) {
+      var v = trim(row[c]).toUpperCase();
+      if (v.indexOf('IMAGE') !== -1) return c;
+    }
+  }
+  return -1;
+}
+
 function isMac(){ return /Macintosh|Mac OS X/.test(navigator.userAgent); }
 function koFont(){ return isMac() ? "Apple SD Gothic Neo" : "Malgun Gothic"; }
 function koNormalize(s){ try{ return String(s||"").normalize("NFC"); }catch(_){ return String(s||""); } }
@@ -132,6 +146,9 @@ function parseExcelData(){
     if(/^A\./.test(sheetName)) continue; // 표지/서문 제외
     var data = appState.allSheets[sheetName];
 
+    // ✅ 추가: IMAGE 열 인덱스 파악
+    var imageCol = getImageColIndex(data);     
+
     currentCategory = '';
     for(var r=1; r<data.length; r++){
       var row = data[r]; if(!row || row.length<2) continue;
@@ -173,6 +190,16 @@ function parseExcelData(){
         if (isLikelyImage(url)) { current.imageUrl = url; current.image = url; }
         else { current.imageUrl = ''; current.image = null; }
       }
+        // ... (AREA/MATERIAL/ITEM/REMARKS 등의 처리 if/else 끝난 직후)
+        // ✅ 추가: 이 행에 IMAGE 열 값이 있으면 current에 적용
+        if (current && imageCol > -1) {
+          var imgCell = (row[imageCol] != null) ? String(row[imageCol]) : '';
+          var imgUrl  = extractImageUrl(imgCell);
+          if (isLikelyImage(imgUrl)) {
+            current.imageUrl = imgUrl;
+            current.image    = imgUrl;
+          }
+        }
     }
     if(current){ appState.materials.push(current); current=null; }
   }
