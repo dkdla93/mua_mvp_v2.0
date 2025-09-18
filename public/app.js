@@ -19,9 +19,13 @@ function isMac(){ return /Macintosh|Mac OS X/.test(navigator.userAgent); }
 function koFont(){ return isMac() ? "Apple SD Gothic Neo" : "Malgun Gothic"; }
 function koNormalize(s){ try{ return String(s||"").normalize("NFC"); }catch(_){ return String(s||""); } }
 function trim(v){ return (v==null)?"":String(v).trim(); }
+
 function isLikelyImage(v){
-  v = trim(v);
+  v = (v==null) ? "" : String(v).trim();
   return /^data:image\//i.test(v) || /^https?:\/\//i.test(v) || /\.(png|jpe?g|gif|webp)$/i.test(v);
+}
+function thumbHtml(url){
+  return '<img src="'+url+'" style="width:40px;height:30px;object-fit:cover;border-radius:3px;" alt="이미지">';
 }
 
 document.addEventListener("DOMContentLoaded", function(){
@@ -262,8 +266,11 @@ function createMaterialTable(){
   }
   appState.materials.forEach(function(m, i){
     var tr=document.createElement('tr'); tr.className='material-row'; tr.dataset.materialId=m.id; tr.style.height='35px';
-    var imageHtml = (m.image||m.imageUrl) ? '<img src="'+(m.image||m.imageUrl)+'" style="width:40px;height:30px;object-fit:cover;border-radius:3px;" alt="자재">' :
-      '<div style="width:40px;height:30px;background:#f0f0f0;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;color:#999;">없음</div>';
+    var imgSrc = (m.image || m.imageUrl || "");
+    var imageHtml = isLikelyImage(imgSrc)
+       ? thumbHtml(imgSrc)
+       : '<div style="width:40px;height:30px;background:#f0f0f0;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;color:#999;">없음</div>';     
+
     var remarksValue = trim(m.remarks) || trim(m.brand);
 
     tr.innerHTML =
@@ -423,7 +430,7 @@ function generatePPT(){
           m.area||'',
           m.item||'',
           rv||'',
-          (m.imageUrl?'있음':'')
+          ''
         ]);
       });
 
@@ -435,7 +442,43 @@ function generatePPT(){
         fill:'FFFFFF', valign:'middle', margin:2, color:'333333',
         rowH: rowH
       });
+      
+      // --- (PPT) IMAGE 열에 썸네일 오버레이 삽입 ---
+      (function placeThumbs(){
+        // 1) IMAGE 텍스트는 비워서 겹침 문제 방지 (rows[0]은 헤더)
+        for (var ri = 1; ri < rows.length; ri++) rows[ri][6] = ''; // 6번째 인덱스 = IMAGE 컬럼
+      
+        // 2) 열 누적폭으로 IMAGE 셀의 x 좌표 계산
+        var acc = [0];
+        for (var ci=0; ci<colW.length; ci++) acc[ci+1] = acc[ci] + colW[ci];
+      
+        var imgColLeft  = tableX + acc[6];      // IMAGE 열의 왼쪽 x
+        var cellPadX    = 0.05;                  // 셀 안 여백(인치)
+        var cellPadY    = 0.05;
+        var maxW        = Math.max(0.45, colW[6] - (cellPadX*2));  // 셀 폭 - 패딩
+        var maxH        = Math.max(0.30, rowH   - (cellPadY*2));   // 셀 높이 - 패딩
+      
+        for (var r = 0; r < mats.length; r++) {
+          var m = mats[r];
+          var url = (m.image || m.imageUrl || '');
+          if (!isLikelyImage(url)) continue;
+      
+          var x = imgColLeft + cellPadX;
+          var y = tableY + rowH * (1 + r) + cellPadY; // +1: 헤더 다음 첫 데이터행
+      
+          // 비율유지보다 “셀에 맞춤”을 우선: w/h 모두 지정
+          slide.addImage({
+            data: url,
+            x: x, y: y,
+            w: maxW, h: maxH,
+            rounding: 2
+          });
+        }
+      })();
 
+       
+
+       
       // ---- HTML Preview (Step 3) ----
       var div=document.createElement('div');
       div.style.cssText='margin-bottom:30px;padding:20px;border:1px solid #ddd;border-radius:8px;background:#fafafa;';
@@ -449,7 +492,11 @@ function generatePPT(){
           '<td style="border:1px solid #ddd;padding:4px;font-size:0.8em;">'+(mm.area||'')+'</td>'+
           '<td style="border:1px solid #ddd;padding:4px;font-size:0.8em;">'+(mm.item||'')+'</td>'+
           '<td style="border:1px solid #ddd;padding:4px;font-size:0.8em;">'+rv+'</td>'+
-          '<td style="border:1px solid #ddd;padding:4px;font-size:0.8em;">'+(mm.imageUrl?'있음':'')+'</td>'+
+          
+          '<td style="border:1px solid #ddd;padding:4px;font-size:0.8em;">'
+          (isLikelyImage(mm.image||mm.imageUrl) ? thumbHtml(mm.image||mm.imageUrl) : '')
+          '</td>'
+
           '</tr>';
       });
       div.innerHTML =
