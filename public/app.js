@@ -135,24 +135,29 @@ function stripQuotes(s) {
     .replace(/^[\s'"‘’“”<\(]+/, '')
     .replace(/[\s'"‘’“”>\)]+$/, '');
 }
+
 function extractImageUrl(s) {
   if (!s) return '';
   let raw = stripQuotes(s);
 
+  // HYPERLINK("url","text") 형태 지원
+  let h = raw.match(/HYPERLINK\(["']([^"']+)["']/i);
+  if (h && h[1]) raw = h[1];
+
   // 1) data URL 우선
   if (/^data:image\//i.test(raw)) return raw;
 
-  // 2) 문자열 내부에서 가장 그럴듯한 http(s) 이미지 URL 뽑기
-  //    - 확장자 있는 것
+  // 2) 확장자 있는 http(s) 이미지
   let m = raw.match(/https?:\/\/[^\s"')]+?\.(?:png|jpe?g|gif|webp|svg)(\?[^\s"')]*)?/i);
   if (m) return m[0];
 
-  // 3) 확장자 없어도 바로 이미지 응답하는 호스트(예: picsum, placeholder 등)
+  // 3) 확장자 없어도 바로 이미지 응답하는 호스트
   m = raw.match(/https?:\/\/[^\s"')]+/i);
   if (m) return m[0];
 
   return '';
 }
+
 
 function isLikelyImage(v) {
   const u = extractImageUrl(v);
@@ -246,36 +251,49 @@ function parseExcelData(){
     var url = extractImageUrl(v);
     return isLikelyImage(url) ? url : '';
   }
-  // 같은 행에서 못 찾으면, 고정 라벨열 +1 → 다음 1~2행을 더 탐색
-  function robustPickImage(data, r, imageCol){
-    var row = data[r] || [];
 
-    // 1) 같은 행에서 "IMAGE" 라벨 오른쪽 값
-    var val = valueRightByLabel(row, ['IMAGE']);
-    var u = pickImageFromCell(val);
-    if (u) return u;
-
-    // 2) 보조: 시트 상단에서 잡은 IMAGE 열이 라벨열인 경우 그 오른쪽 값
-    if (imageCol > -1 && row[imageCol+1] != null){
-      u = pickImageFromCell(row[imageCol+1]);
-      if (u) return u;
-    }
-    // 3) 그래도 없으면 아래로 1~2행 더 보며 "IMAGE" 라벨 오른쪽 값 시도
-    for (var k=1; k<=2; k++){
-      var r2 = r + k;
-      if (r2 >= data.length) break;
-      var row2 = data[r2] || [];
-      var val2 = valueRightByLabel(row2, ['IMAGE']);
-      u = pickImageFromCell(val2);
-      if (u) return u;
-      // 보조 2: imageCol+1도 한 번 더 시도
-      if (imageCol > -1 && row2[imageCol+1] != null){
-        u = pickImageFromCell(row2[imageCol+1]);
-        if (u) return u;
-      }
-    }
-    return '';
-  }
+      
+   // 같은 행에서 못 찾으면, 고정 라벨열과 주변칸 → 아래 1~2행까지 범용 탐색
+   function robustPickImage(data, r, imageCol){
+     const pick = (val) => {
+       const url = extractImageUrl(val);
+       return isLikelyImage(url) ? url : '';
+     };
+   
+     const row = data[r] || [];
+   
+     // 0) imageCol이 유효하다면: 같은 열 → +1 → -1 순서로 시도
+     if (imageCol > -1) {
+       if (row[imageCol]   != null) { const u = pick(row[imageCol]);   if (u) return u; }
+       if (row[imageCol+1] != null) { const u = pick(row[imageCol+1]); if (u) return u; }
+       if (imageCol-1 >= 0 && row[imageCol-1] != null) { const u = pick(row[imageCol-1]); if (u) return u; }
+     }
+   
+     // 1) 같은 행에서 "IMAGE" 라벨 오른쪽 값
+     let val = valueRightByLabel(row, ['IMAGE']);
+     let u = pick(val);
+     if (u) return u;
+   
+     // 2) 아래 1~2행에서도 같은 순서로 탐색
+     for (let k=1; k<=2; k++){
+       const r2 = r + k;
+       if (r2 >= data.length) break;
+       const row2 = data[r2] || [];
+   
+       if (imageCol > -1) {
+         if (row2[imageCol]   != null) { u = pick(row2[imageCol]);   if (u) return u; }
+         if (row2[imageCol+1] != null) { u = pick(row2[imageCol+1]); if (u) return u; }
+         if (imageCol-1 >= 0 && row2[imageCol-1] != null) { u = pick(row2[imageCol-1]); if (u) return u; }
+       }
+   
+       val = valueRightByLabel(row2, ['IMAGE']);
+       u = pick(val);
+       if (u) return u;
+     }
+   
+     return '';
+   }
+   
 
   appState.materials = [];
 
