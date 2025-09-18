@@ -126,13 +126,41 @@ function thumbHtml(url){
   return '<img src="'+url+'" style="width:40px;height:30px;object-fit:cover;border-radius:3px;" alt="이미지">';
 }
 
-document.addEventListener("DOMContentLoaded", function(){
-  ensureAnnotatorUI(); // 어노테이터 DOM이 없으면 생성
-  document.getElementById('excelFile')?.addEventListener('change', handleExcelUpload);
-  document.getElementById('minimapFile')?.addEventListener('change', handleMinimapUpload);
-  document.getElementById('sceneFiles')?.addEventListener('change', handleSceneUpload);
-  document.getElementById('generateBtn')?.addEventListener('click', generatePPT);
+// 전역 위임: input이 나중에 그려져도 항상 동작
+let _uploadBound = false;
+document.addEventListener('DOMContentLoaded', () => {
+  ensureAnnotatorUI();
+  bindGenerateBtn();      // 버튼은 흔히 고정이므로 한 번만
+  if (!_uploadBound) {
+    _uploadBound = true;
+    document.addEventListener('change', globalChangeDelegation, true);
+  }
 });
+
+// PPT 버튼만 직접 바인딩 (없으면 무시)
+function bindGenerateBtn(){
+  const btn = document.getElementById('generateBtn');
+  if (btn && !btn._bound) { btn._bound = true; btn.addEventListener('click', generatePPT); }
+}
+
+// change 이벤트 위임 핸들러
+function globalChangeDelegation(e){
+  const el = e.target;
+  if (!el || el.tagName !== 'INPUT' || el.type !== 'file') return;
+
+  // id 기준 라우팅 (id가 다르면 name으로도 보조)
+  const id = el.id || '';
+  const name = el.name || '';
+
+  if (id === 'excelFile' || name === 'excelFile') {
+    handleExcelUpload(e);
+  } else if (id === 'minimapFile' || name === 'minimapFile') {
+    handleMinimapUpload(e);
+  } else if (id === 'sceneFiles' || name === 'sceneFiles') {
+    handleSceneUpload(e);
+  }
+}
+
 
 /* =======================
    Excel Loading & Parsing
