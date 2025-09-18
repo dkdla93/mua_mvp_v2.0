@@ -195,111 +195,174 @@ function valueRightOf(row, keyIdx){
 }
 
 function parseExcelData(){
-  appState.materials = [];
-  const sheets = Object.keys(appState.allSheets);
+  // 내부 유틸 (이 함수 안에서만 사용)
+  function isHeaderNoise(v){
+    return /^(REMARKS|REMARK|MANUFAC|ORIGIN|IMAGE|EA|QTY|UNIT|DESCRIPTION)$/i.test(trim(v));
+  }
+  // 현재 행에서 라벨을 찾아 오른쪽 첫 값셀
+  function valueRightByLabel(row, labels){
+    var hit = findKeyInRow(row, labels);
+    return hit ? trim(valueRightOf(row, hit.idx) || '') : '';
+  }
+  // 이미지 추출(문자열에서 data:나 http(s) URL만 살림)
+  function pickImageFromCell(v){
+    var url = extractImageUrl(v);
+    return isLikelyImage(url) ? url : '';
+  }
+  // 같은 행에서 못 찾으면, 고정 라벨열 +1 → 다음 1~2행을 더 탐색
+  function robustPickImage(data, r, imageCol){
+    var row = data[r] || [];
 
-  for (let s=0; s<sheets.length; s++){
-    const sheetName = sheets[s];
-    if (/^A\./.test(sheetName)) continue;            // 표지/서문 스킵
-    const data = appState.allSheets[sheetName];
+    // 1) 같은 행에서 "IMAGE" 라벨 오른쪽 값
+    var val = valueRightByLabel(row, ['IMAGE']);
+    var u = pickImageFromCell(val);
+    if (u) return u;
+
+    // 2) 보조: 시트 상단에서 잡은 IMAGE 열이 라벨열인 경우 그 오른쪽 값
+    if (imageCol > -1 && row[imageCol+1] != null){
+      u = pickImageFromCell(row[imageCol+1]);
+      if (u) return u;
+    }
+    // 3) 그래도 없으면 아래로 1~2행 더 보며 "IMAGE" 라벨 오른쪽 값 시도
+    for (var k=1; k<=2; k++){
+      var r2 = r + k;
+      if (r2 >= data.length) break;
+      var row2 = data[r2] || [];
+      var val2 = valueRightByLabel(row2, ['IMAGE']);
+      u = pickImageFromCell(val2);
+      if (u) return u;
+      // 보조 2: imageCol+1도 한 번 더 시도
+      if (imageCol > -1 && row2[imageCol+1] != null){
+        u = pickImageFromCell(row2[imageCol+1]);
+        if (u) return u;
+      }
+    }
+    return '';
+  }
+
+  appState.materials = [];
+
+  var sheets = Object.keys(appState.allSheets);
+  for (var s = 0; s < sheets.length; s++) {
+    var sheetName = sheets[s];
+    // 표지/서문 스킵
+    if (/^A\./.test(sheetName)) continue;
+
+    var data = appState.allSheets[sheetName];
     if (!data || !data.length) continue;
 
-    // ★ 강화된 헤더 탐지
-    const layout = detectSheetLayout(data);
-    const remarksCol = layout.remarksCol;    // 보통 E열
-    const imageCol   = layout.imageCol;      // 보통 F열
+    // 시트 상단에서 라벨 열(헤더) 대략 잡기 (보조 용도)
+    var remarksCol = getColIndexByHeader(data, ['REMARKS','REMARK']);
+    var imageCol   = getColIndexByHeader(data, ['IMAGE']);
 
-    let current=null;
-    let currentCategory   = ''; // MATERIAL / SWITCH / LIGHT 등
-    let currentGroupLabel = ''; // WALL COVERING[도배], PAINT[도장] 등
+    var current = null;
+    var currentCategory   = ''; // MATERIAL/SWITCH/LIGHT 등 큰 카테고리
+    var currentGroupLabel = ''; // A열의 구역 라벨 (예: WALL COVERING [도배])
 
-    for (let r=1; r<data.length; r++){
-      const row = data[r];
-      if (!row || row.length<2) continue;
+    for (var r = 1; r < data.length; r++) {
+      var row = data[r]; if (!row || row.length < 2) continue;
 
-      // 왼쪽 큰 카테고리 업데이트
-      const left0Upper = trim(row[0]).toUpperCase();
-      if (left0Upper && (left0Upper.indexOf('MATERIAL')!==-1 ||
-                         left0Upper.indexOf('SWITCH')  !==-1 ||
-                         left0Upper.indexOf('LIGHT')   !==-1)){
+      // 큰 카테고리 갱신
+      var left0Upper = trim(row[0]).toUpperCase();
+      if (left0Upper &&
+          (left0Upper.indexOf('MATERIAL') !== -1 ||
+           left0Upper.indexOf('SWITCH')   !== -1 ||
+           left0Upper.indexOf('LIGHT')    !== -1)) {
         currentCategory = trim(row[0]);
       }
 
-      // 그룹 라벨(A열) 업데이트 (MATERIAL/DESCRIPTION은 제외)
-      const a0 = trim(row[0]);
-      if (a0 && !/^(MATERIAL|DESCRIPTION)$/i.test(a0)) currentGroupLabel = a0;
+      // A열 라벨(헤더성 단어는 제외)
+      var a0 = trim(row[0]);
+      if (a0 && !/^(MATERIAL|DESCRIPTION)$/i.test(a0)) {
+        currentGroupLabel = a0;
+      }
 
-      // 키워드 감지 (DESCRIPTION은 배제)
-      const hit = findKeyInRow(row, ['AREA','MATERIAL','ITEM','REMARKS','REMARK','IMAGE']);
+      // 키 감지 (DESCRIPTION은 제외)
+      var hit = findKeyInRow(row, ['AREA','MATERIAL','ITEM','REMARKS','REMARK','IMAGE']);
       if (!hit) continue;
 
-      if (hit.key === 'AREA'){
+      if (hit.key === 'AREA') {
+        // 새 항목 시작: 이전 항목 푸시
         if (current) appState.materials.push(current);
+
         current = {
-          id: appState.materials.length+1,
+          id: appState.materials.length + 1,
           tabName: sheetName,
-          displayId: '#'+sheetName,
+          displayId: '#' + sheetName,
+
+          // MATERIAL 기본값: 그룹 라벨 → 카테고리 → 시트명
           material: currentGroupLabel || currentCategory || sheetName || '',
           category: currentCategory || 'MATERIAL',
-          area: trim(valueRightOf(row, hit.idx) || ''),
-          item: '',
+
+          area:    trim(valueRightOf(row, hit.idx) || ''),
+          item:    '',
           remarks: '',
-          brand: '',
+          brand:   '',
           imageUrl: '',
-          image: null
+          image:    null
         };
 
-      } else if (hit.key === 'MATERIAL' && current){
-        const mv = trim(valueRightOf(row, hit.idx) || '');
-        if (mv && !/^(DESCRIPTION|IMAGE|EA|REMARKS)$/i.test(mv)) current.material = mv;
+        // AREA 행에서는 remarks/image 확정하지 않음
 
-        // (보조) 같은 줄 REMARKS/IMAGE — 이후 ITEM에서 다시 덮어씀
-        if (remarksCol > -1){
-          const rem2 = cleanRemarks(row[remarksCol]);
-          if (rem2) current.remarks = rem2;
-        }
-        if (imageCol > -1){
-          const img2 = extractImageUrl(row[imageCol]);
-          if (isLikelyImage(img2)) { current.imageUrl = img2; current.image = img2; }
+      } else if (hit.key === 'MATERIAL' && current) {
+        // MATERIAL 값 (오염 라벨은 무시)
+        var mv = trim(valueRightOf(row, hit.idx) || '');
+        if (mv && !isHeaderNoise(mv)) {
+          current.material = mv;
         }
 
-      } else if (hit.key === 'ITEM' && current){
+        // 보조로 같은 행의 REMARKS/IMAGE도 시도(ITEM에서 다시 덮어씀)
+        var remTry = valueRightByLabel(row, ['REMARKS','REMARK']);
+        if (remTry && !isHeaderNoise(remTry)) current.remarks = remTry;
+
+        var imgTry = robustPickImage(data, r, imageCol);
+        if (imgTry){ current.imageUrl = imgTry; current.image = imgTry; }
+
+      } else if (hit.key === 'ITEM' && current) {
+        // ITEM 값
         current.item = trim(valueRightOf(row, hit.idx) || '');
 
-        // ✅ 정답: ITEM 행의 같은 줄 remarksCol
-        if (remarksCol > -1){
-          const rem3 = cleanRemarks(row[remarksCol]);
-          if (rem3) current.remarks = rem3;            // 비어있지 않을 때에만 갱신
+        // ✅ REMARKS: 같은 행에서 라벨 찾아 오른쪽 값
+        var remVal = valueRightByLabel(row, ['REMARKS','REMARK']);
+        if (remVal && !isHeaderNoise(remVal)) {
+          current.remarks = remVal;
+        } else if (remarksCol > -1 && row[remarksCol+1] != null) {
+          // 보조: 상단에서 잡은 remarksCol은 라벨열일 수 있으므로 +1을 값으로 시도
+          var remVal2 = trim(row[remarksCol+1]);
+          if (remVal2 && !isHeaderNoise(remVal2)) current.remarks = remVal2;
         }
 
-        // 같은 줄 IMAGE
-        if (imageCol > -1){
-          const img3 = extractImageUrl(row[imageCol]);
-          if (isLikelyImage(img3)) { current.imageUrl = img3; current.image = img3; }
-        }
+        // ✅ IMAGE: 같은/인접 행에서 안정적으로 추출
+        var imgUrl = robustPickImage(data, r, imageCol);
+        if (imgUrl){ current.imageUrl = imgUrl; current.image = imgUrl; }
 
-      } else if ((hit.key === 'REMARKS' || hit.key === 'REMARK') && current){
-        // (안전망) 행 키로 오는 경우
-        const rv = cleanRemarks(valueRightOf(row, hit.idx));
-        if (rv) current.remarks = rv;
+      } else if ((hit.key === 'REMARKS' || hit.key === 'REMARK') && current) {
+        // 드물게 REMARKS가 행 키로 따로 오는 시트용 안전망
+        var rv = trim(valueRightOf(row, hit.idx) || '');
+        if (rv && !isHeaderNoise(rv)) current.remarks = rv;
 
-      } else if (hit.key === 'IMAGE' && current){
-        const val = valueRightOf(row, hit.idx);
-        const url = extractImageUrl(val);
-        if (isLikelyImage(url)) { current.imageUrl = url; current.image = url; }
+      } else if (hit.key === 'IMAGE' && current) {
+        // 드물게 IMAGE가 행 키로 따로 오는 시트용 안전망
+        var iv = trim(valueRightOf(row, hit.idx) || '');
+        var iu = pickImageFromCell(iv);
+        if (iu){ current.imageUrl = iu; current.image = iu; }
       }
     }
 
-    if (current){
-      if (!trim(current.material))
+    // 마지막 항목 정리
+    if (current) {
+      if (!trim(current.material)) {
         current.material = currentGroupLabel || currentCategory || sheetName || '';
+      }
       appState.materials.push(current);
       current = null;
     }
   }
 
+  // 파싱 후 다음 단계로
   setTimeout(checkAllFilesUploaded, 100);
 }
+
 
 
 
