@@ -19,9 +19,8 @@ function isMac(){ return /Macintosh|Mac OS X/.test(navigator.userAgent); }
 function koFont(){ return isMac() ? "Apple SD Gothic Neo" : "Malgun Gothic"; }
 function koNormalize(s){ try{ return String(s||"").normalize("NFC"); }catch(_){ return String(s||""); } }
 function trim(v){ return (v==null)?"":String(v).trim(); }
-
 function isLikelyImage(v){
-  v = (v==null) ? "" : String(v).trim();
+  v = trim(v);
   return /^data:image\//i.test(v) || /^https?:\/\//i.test(v) || /\.(png|jpe?g|gif|webp)$/i.test(v);
 }
 function thumbHtml(url){
@@ -266,10 +265,11 @@ function createMaterialTable(){
   }
   appState.materials.forEach(function(m, i){
     var tr=document.createElement('tr'); tr.className='material-row'; tr.dataset.materialId=m.id; tr.style.height='35px';
+
     var imgSrc = (m.image || m.imageUrl || "");
     var imageHtml = isLikelyImage(imgSrc)
-       ? thumbHtml(imgSrc)
-       : '<div style="width:40px;height:30px;background:#f0f0f0;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;color:#999;">없음</div>';     
+      ? thumbHtml(imgSrc)
+      : '<div style="width:40px;height:30px;background:#f0f0f0;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;color:#999;">없음</div>';
 
     var remarksValue = trim(m.remarks) || trim(m.brand);
 
@@ -417,9 +417,10 @@ function generatePPT(){
       var colW = [0.55, 1.35, 1.35, 1.2, 2.9, 1.5, 0.75];
 
       // 만약 합계가 tableW 초과면 스케일 다운
-      var sum=colW.reduce((a,b)=>a+b,0);
+      var sum=colW.reduce(function(a,b){return a+b;},0);
       if(sum>tableW){ var f=tableW/sum; colW=colW.map(function(w){ return Math.max(0.5, w*f); }); }
 
+      // rows: IMAGE 열은 오버레이로 넣을 것이므로 텍스트는 비움
       var rows=[['No.','탭명','MATERIAL','AREA','ITEM','REMARKS','IMAGE']];
       mats.forEach(function(m, idx){
         var rv = trim(m.remarks) || trim(m.brand);
@@ -430,61 +431,45 @@ function generatePPT(){
           m.area||'',
           m.item||'',
           rv||'',
-          ''
+          '' // 이미지 텍스트 비움
         ]);
       });
 
       slide.addTable(rows, {
         x:tableX, y:tableY, w:tableW,
         colW: colW,
-        fontSize: 9,                                        // 글씨 조금 더 작게
+        fontSize: 9,
         border:{type:'solid', color:'CCCCCC', pt:1},
         fill:'FFFFFF', valign:'middle', margin:2, color:'333333',
         rowH: rowH
       });
-      
+
       // --- (PPT) IMAGE 열에 썸네일 오버레이 삽입 ---
       (function placeThumbs(){
-        // 1) IMAGE 텍스트는 비워서 겹침 문제 방지 (rows[0]은 헤더)
-        for (var ri = 1; ri < rows.length; ri++) rows[ri][6] = ''; // 6번째 인덱스 = IMAGE 컬럼
-      
-        // 2) 열 누적폭으로 IMAGE 셀의 x 좌표 계산
-        var acc = [0];
-        for (var ci=0; ci<colW.length; ci++) acc[ci+1] = acc[ci] + colW[ci];
-      
-        var imgColLeft  = tableX + acc[6];      // IMAGE 열의 왼쪽 x
-        var cellPadX    = 0.05;                  // 셀 안 여백(인치)
-        var cellPadY    = 0.05;
-        var maxW        = Math.max(0.45, colW[6] - (cellPadX*2));  // 셀 폭 - 패딩
-        var maxH        = Math.max(0.30, rowH   - (cellPadY*2));   // 셀 높이 - 패딩
-      
-        for (var r = 0; r < mats.length; r++) {
-          var m = mats[r];
+        // 열 누적폭으로 IMAGE 셀의 x 좌표 계산
+        var acc=[0]; for(var ci=0; ci<colW.length; ci++) acc[ci+1]=acc[ci]+colW[ci];
+        var imgColLeft = tableX + acc[6]; // IMAGE 열의 왼쪽 x
+        var cellPadX=0.05, cellPadY=0.05;
+        var maxW=Math.max(0.45, colW[6] - (cellPadX*2));
+        var maxH=Math.max(0.30, rowH    - (cellPadY*2));
+
+        for(var r=0; r<mats.length; r++){
+          var m=mats[r];
           var url = (m.image || m.imageUrl || '');
-          if (!isLikelyImage(url)) continue;
-      
+          if(!isLikelyImage(url)) continue;
           var x = imgColLeft + cellPadX;
-          var y = tableY + rowH * (1 + r) + cellPadY; // +1: 헤더 다음 첫 데이터행
-      
-          // 비율유지보다 “셀에 맞춤”을 우선: w/h 모두 지정
-          slide.addImage({
-            data: url,
-            x: x, y: y,
-            w: maxW, h: maxH,
-            rounding: 2
-          });
+          var y = tableY + rowH * (1 + r) + cellPadY; // +1: 헤더 다음
+          slide.addImage({ data:url, x:x, y:y, w:maxW, h:maxH, rounding:2 });
         }
       })();
 
-       
-
-       
-      // ---- HTML Preview (Step 3) ----
+      // ---- HTML Preview (Step 3) with thumbnails ----
       var div=document.createElement('div');
       div.style.cssText='margin-bottom:30px;padding:20px;border:1px solid #ddd;border-radius:8px;background:#fafafa;';
       var trows='';
       mats.forEach(function(mm, idx){
         var rv = trim(mm.remarks) || trim(mm.brand) || '';
+        var imgTd = isLikelyImage(mm.image||mm.imageUrl) ? thumbHtml(mm.image||mm.imageUrl) : '';
         trows += '<tr style="height:35px;">'+
           '<td style="border:1px solid #ddd;padding:4px;text-align:center;font-size:0.8em;">'+(idx+1)+'</td>'+
           '<td style="border:1px solid #ddd;padding:4px;font-size:0.8em;">'+(mm.tabName||'')+'</td>'+
@@ -492,18 +477,15 @@ function generatePPT(){
           '<td style="border:1px solid #ddd;padding:4px;font-size:0.8em;">'+(mm.area||'')+'</td>'+
           '<td style="border:1px solid #ddd;padding:4px;font-size:0.8em;">'+(mm.item||'')+'</td>'+
           '<td style="border:1px solid #ddd;padding:4px;font-size:0.8em;">'+rv+'</td>'+
-          
-          '<td style="border:1px solid #ddd;padding:4px;font-size:0.8em;">'
-          (isLikelyImage(mm.image||mm.imageUrl) ? thumbHtml(mm.image||mm.imageUrl) : '')
-          '</td>'
-
+          '<td style="border:1px solid #ddd;padding:4px;font-size:0.8em;text-align:center;">'+imgTd+'</td>'+
           '</tr>';
       });
+      var miniHtml = '<img src="'+miniImg+'" style="max-width:100%;height:120px;object-fit:cover;border-radius:5px;">';
       div.innerHTML =
         '<h4 style="margin-bottom:15px;color:#2c3e50;">'+title+'</h4>'+
         '<div style="display:flex;gap:20px;align-items:flex-start;">'+
           '<div style="flex:2;"><img src="'+scene.data+'" style="max-width:100%;height:200px;object-fit:cover;border-radius:5px;"></div>'+
-          '<div style="flex:1;"><h5>미니맵</h5><img src="'+miniImg+'" style="max-width:100%;height:120px;object-fit:cover;border-radius:5px;"></div>'+
+          '<div style="flex:1;"><h5>미니맵</h5>'+miniHtml+'</div>'+
         '</div>'+
         '<table style="width:100%;margin-top:15px;border-collapse:collapse;font-size:0.85em;">'+
           '<thead><tr style="background:#f8f9fa;height:30px;">'+
